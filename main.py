@@ -9,7 +9,7 @@ import traceback
 # ==========================================
 # ⚙️ НАСТРОЙКИ СЕТИ (ВСТАВЬ СВОИ ДАННЫЕ)
 # ==========================================
-TOKEN = "11111"  # <-- ТВОЙ ТОКЕН
+TOKEN = "GARDEN_MASTER_251184psv"  # <-- ТВОЙ ТОКЕН
 SERVER_URL = "https://izba-art.ru/api/v1/sync" # <-- ТВОЙ URL
 LOCAL_PORT = 1090
 # ==========================================
@@ -18,26 +18,24 @@ LOCAL_PORT = 1090
 RUNNING = False
 TRACTOR_TASK = None
 
-# Словари для потоков (как в твоем ПК скрипте)
+# Словари для потоков
 streams = {}
 pending_streams = {}
 next_stream_id = 1
-tunnel_queue = None # Будет создан внутри main
+tunnel_queue = None 
 
 async def main(page: ft.Page):
     # --- 0. НАСТРОЙКА ANDROID ---
-    # Важно! Запрещаем телефону уходить в глубокий сон, пока приложение открыто
     page.platform = ft.PagePlatform.ANDROID
     page.keep_awake = True 
     
-    # --- 1. ВИЗУАЛ (БЕЗОПАСНЫЙ СТАРТ) ---
+    # --- 1. ВИЗУАЛ ---
     page.title = "Tractor Ultimate"
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = "#000000"
     page.padding = 10
     page.scroll = None 
     
-    # Инициализация очереди сообщений (строго внутри loop)
     global tunnel_queue
     tunnel_queue = asyncio.Queue()
 
@@ -53,19 +51,17 @@ async def main(page: ft.Page):
     )
 
     def log(msg, color="white"):
-        # Логируем безопасно для UI
         try:
             text = ft.Text(f"> {msg}", color=color, size=11, font_family="monospace", no_wrap=False, selectable=True)
             logs_column.controls.append(text)
-            if len(logs_column.controls) > 80: # Чистим память
+            if len(logs_column.controls) > 80:
                 logs_column.controls.pop(0)
             page.update()
         except: pass
 
-    # --- 2. ЯДРО ТРАКТОРА (ТВОЙ PROTOCOL) ---
+    # --- 2. ЯДРО ТРАКТОРА ---
 
     async def tunnel_sender(ws):
-        """Отправка данных из очереди в WebSocket"""
         try:
             while RUNNING:
                 packet = await tunnel_queue.get()
@@ -75,7 +71,6 @@ async def main(page: ft.Page):
         except Exception as e: log(f"Sender Error: {e}", "red")
 
     async def heartbeat_loop(ws):
-        """Аритмия: шлет мусор, чтобы держать канал"""
         try:
             while RUNNING:
                 sleep_time = random.randint(20, 140)
@@ -84,7 +79,6 @@ async def main(page: ft.Page):
                 junk_size = random.randint(10, 50)
                 junk = random.randbytes(junk_size)
                 
-                # Пакет Heartbeat [ID=0, CMD=3]
                 packet = struct.pack('!IB', 0, 3) + junk
                 log(f"💓 Pulse ({junk_size}b)", "pink")
                 await ws.send_bytes(packet)
@@ -92,27 +86,24 @@ async def main(page: ft.Page):
         except Exception: pass
 
     async def tunnel_receiver(ws):
-        """Прием данных из WebSocket"""
         try:
             async for msg in ws:
                 if not RUNNING: break
                 if msg.type == aiohttp.WSMsgType.BINARY:
                     if len(msg.data) < 5: continue
-                    # Распаковка заголовка
                     stream_id = struct.unpack('!I', msg.data[:4])[0]
                     cmd = msg.data[4]
                     
-                    if cmd == 0:   # Connected
+                    if cmd == 0:   
                         if stream_id in pending_streams: pending_streams[stream_id].set()
-                    elif cmd == 1: # Data
+                    elif cmd == 1: 
                         if stream_id in streams: await streams[stream_id].put(msg.data[5:])
-                    elif cmd == 2: # Closed
+                    elif cmd == 2: 
                         if stream_id in streams: await streams[stream_id].put(None)
         except Exception as e:
             log(f"Receiver Error: {e}", "red")
 
     async def handle_socks_client(reader, writer):
-        """Обработка подключения Telegram (SOCKS5)"""
         global next_stream_id
         stream_id = next_stream_id
         next_stream_id += 1
@@ -121,56 +112,42 @@ async def main(page: ft.Page):
         connected_event = asyncio.Event()
         pending_streams[stream_id] = connected_event
 
-        peer = writer.get_extra_info('peername')
-        
         try:
-            # 1. SOCKS5 Auth Handshake
-            # Читаем приветствие (версия + методы)
             await reader.read(256) 
-            # Отвечаем: Версия 5, Метод 0 (No Auth)
             writer.write(b"\x05\x00")
             await writer.drain()
             
-            # 2. SOCKS5 Request
             data = await reader.read(4096)
             if not data or len(data) < 7: return
             
-            # Парсим адрес назначения
-            if data[3] == 1: # IPv4
+            if data[3] == 1: 
                 addr = ".".join(map(str, data[4:8]))
                 port = struct.unpack('!H', data[8:10])[0]
-            elif data[3] == 3: # Domain
+            elif data[3] == 3: 
                 l = data[4]
                 addr = data[5:5+l].decode()
                 port = struct.unpack('!H', data[5+l:7+l])[0]
-            else: return # IPv6 не поддерживаем пока
+            else: return 
 
-            log(f"🔗 Telegram -> {addr}:{port}", "cyan")
+            log(f"🔗 Connect -> {addr}:{port}", "cyan")
 
-            # Шлем команду "Connect" в туннель
             packet = struct.pack('!IBB', stream_id, 0, len(addr)) + addr.encode() + struct.pack('!H', port)
             await tunnel_queue.put(packet)
 
-            # Ждем подтверждения от сервера
             try:
                 await asyncio.wait_for(connected_event.wait(), timeout=8.0)
             except asyncio.TimeoutError:
-                log(f"timeout {stream_id}", "red")
                 return
 
-            # Отвечаем Telegram'у: "Всё ок, соединение установлено"
             writer.write(b"\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00")
             await writer.drain()
 
-            # 3. Пересылка данных (Duplex)
             async def telegram_reader():
                 try:
                     while RUNNING:
                         d = await reader.read(16384)
                         if not d: break
-                        # Упаковка данных [ID, CMD=1, DATA]
                         await tunnel_queue.put(struct.pack('!IB', stream_id, 1) + d)
-                    # Команда закрытия [ID, CMD=2]
                     await tunnel_queue.put(struct.pack('!IB', stream_id, 2))
                 except: pass
 
@@ -185,16 +162,14 @@ async def main(page: ft.Page):
 
             await asyncio.gather(telegram_reader(), telegram_writer())
 
-        except Exception:
-            pass
+        except Exception: pass
         finally:
-            # Уборка мусора
             if stream_id in streams: del streams[stream_id]
             if stream_id in pending_streams: del pending_streams[stream_id]
             try: writer.close()
             except: pass
 
-    # --- 3. ГЛАВНЫЙ ЦИКЛ (ENGINE) ---
+    # --- 3. ГЛАВНЫЙ ЦИКЛ ---
     
     async def start_engine():
         global RUNNING
@@ -202,7 +177,6 @@ async def main(page: ft.Page):
         session = None
         
         try:
-            # Запускаем локальный SOCKS сервер
             server = await asyncio.start_server(handle_socks_client, '127.0.0.1', LOCAL_PORT)
             log(f"🚜 TRACTOR ACTIVE: 127.0.0.1:{LOCAL_PORT}", "green")
             
@@ -211,11 +185,9 @@ async def main(page: ft.Page):
             while RUNNING:
                 try:
                     log(f"Connecting to Cloud...", "yellow")
-                    # Подключение к WebSocket
                     async with session.ws_connect(SERVER_URL, headers={"Authorization": TOKEN}, ssl=False) as ws:
                         log("✅ CLOUD CONNECTED!", "green")
                         
-                        # Запускаем задачи обслуживания туннеля
                         sender = asyncio.create_task(tunnel_sender(ws))
                         receiver = asyncio.create_task(tunnel_receiver(ws))
                         heart = asyncio.create_task(heartbeat_loop(ws))
@@ -269,13 +241,12 @@ async def main(page: ft.Page):
 
     btn = ft.ElevatedButton("ACTIVATE", on_click=on_click, bgcolor="#222222", color="white", width=200, height=50)
 
-    # Заголовок и сборка
     try:
         page.add(
             ft.Column([
                 ft.Container(height=30),
                 ft.Row([
-                    # ИСПРАВИЛ ТУТ: Просто SHIELD вместо SHIELD_SHARP
+                    # ВОТ ТУТ ТЕПЕРЬ ПРАВИЛЬНАЯ ИКОНКА (SHIELD)
                     ft.Icon(ft.icons.SHIELD, size=40, color="cyan"),
                     ft.Text("ARRHYTHMIA", size=20, weight="bold", font_family="monospace"),
                 ], alignment=ft.MainAxisAlignment.CENTER),
@@ -289,6 +260,4 @@ async def main(page: ft.Page):
     except Exception as e:
         page.add(ft.Text(f"UI BUILD ERROR: {e}", color="red"))
 
-# Запускаем через Flet (он сам создаст Loop)
 ft.app(target=main)
-
