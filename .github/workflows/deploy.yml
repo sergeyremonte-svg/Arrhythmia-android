@@ -28,12 +28,11 @@ jobs:
         with:
           channel: 'stable'
 
-      # Строим APK (с командой yes, чтобы не зависал)
+      # ИСПРАВЛЕНИЕ ТУТ: Добавили права на ИНТЕРНЕТ и включили пакеты
       - name: Build APK
         run: |
-          yes | flet build apk -v
+          yes | flet build apk -v --permissions INTERNET --include-packages flet,aiohttp
 
-      # ИСПРАВЛЕНИЕ: Ищем APK везде, где только можно (**/*.apk)
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
