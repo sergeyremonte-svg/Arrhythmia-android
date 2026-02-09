@@ -1,0 +1,36 @@
+name: Build Android APK
+on: workflow_dispatch
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Libraries
+        run: |
+          pip install flet aiohttp
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0'
+
+      - name: Build APK
+        run: |
+          flet build apk -v
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v3
+        with:
+          name: Arrhythmia-App
+          path: build/app/outputs/flutter-apk/app-release.apk
