@@ -275,7 +275,8 @@ async def main(page: ft.Page):
             ft.Column([
                 ft.Container(height=30),
                 ft.Row([
-                    ft.Icon(ft.icons.SHIELD_SHARP, size=40, color="cyan"),
+                    # ИСПРАВИЛ ТУТ: Просто SHIELD вместо SHIELD_SHARP
+                    ft.Icon(ft.icons.SHIELD, size=40, color="cyan"),
                     ft.Text("ARRHYTHMIA", size=20, weight="bold", font_family="monospace"),
                 ], alignment=ft.MainAxisAlignment.CENTER),
                 ft.Container(height=20),
@@ -290,3 +291,4 @@ async def main(page: ft.Page):
 
 # Запускаем через Flet (он сам создаст Loop)
 ft.app(target=main)
+
