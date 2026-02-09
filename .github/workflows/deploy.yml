@@ -31,7 +31,7 @@ jobs:
       # ИСПРАВЛЕНИЕ ТУТ: Добавили права на ИНТЕРНЕТ и включили пакеты
       - name: Build APK
         run: |
-          yes | flet build apk -v --permissions INTERNET --include-packages flet,aiohttp
+          yes | flet build apk -v
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
