@@ -1,0 +1,51 @@
+name: Build Android APK
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Ставим Java 17 (обязательно для Android в 2026)
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # Устанавливаем библиотеки (Flet нужен для сборки)
+      - name: Install Libraries
+        run: |
+          pip install flet aiohttp
+
+      # Ставим Flutter (инструмент Google)
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      # Принимаем лицензии Android (чтобы не ругался)
+      - name: Accept Licenses
+        run: |
+          yes | sdkmanager --licenses || true
+
+      # ГЛАВНЫЙ ШАГ: Просто строим. Без лишних слов.
+      # yes | нужен на случай, если он спросит "Скачать шаблон?"
+      - name: Build APK
+        run: |
+          yes | flet build apk -v
+
+      # Загружаем готовый файл
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Arrhythmia-App
+          path: build/app/outputs/flutter-apk/app-release.apk
+          compression-level: 0
