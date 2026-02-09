@@ -1,0 +1,42 @@
+name: Build Android APK
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Libraries
+        run: |
+          pip install flet aiohttp
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      # Строим APK (с командой yes, чтобы не зависал)
+      - name: Build APK
+        run: |
+          yes | flet build apk -v
+
+      # ИСПРАВЛЕНИЕ: Ищем APK везде, где только можно (**/*.apk)
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Arrhythmia-App
+          path: "**/*.apk"
+          compression-level: 0
