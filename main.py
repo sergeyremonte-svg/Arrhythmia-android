@@ -4,7 +4,6 @@ import aiohttp
 import struct
 import random
 import socket
-import traceback
 import ssl 
 
 # ==========================================
@@ -28,8 +27,8 @@ async def main(page: ft.Page):
     page.platform = ft.PagePlatform.ANDROID
     page.keep_awake = True 
     
-    # --- 1. ВИЗУАЛ ---
-    page.title = "Tractor Browser Mode"
+    # --- 1. ВИЗУАЛ (СТРОГО МИНИМАЛИЗМ) ---
+    page.title = "Tractor NoIcon"
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = "#000000"
     page.padding = 10
@@ -70,16 +69,12 @@ async def main(page: ft.Page):
         except Exception as e: pass
 
     async def heartbeat_loop(ws):
-        """ПИНГ (СЕРДЦЕБИЕНИЕ)"""
         try:
             while RUNNING:
-                # Дергаем сервер каждые 10-20 секунд, чтобы выглядеть живым пользователем
                 sleep_time = random.randint(10, 20)
                 await asyncio.sleep(sleep_time)
-                
                 junk_size = random.randint(10, 50)
                 junk = random.randbytes(junk_size)
-                
                 packet = struct.pack('!IB', 0, 3) + junk
                 log(f"💓 Pulse ({junk_size}b)", "pink")
                 await ws.send_bytes(packet)
@@ -94,7 +89,6 @@ async def main(page: ft.Page):
                     if len(msg.data) < 5: continue
                     sid = struct.unpack('!I', msg.data[:4])[0]
                     cmd = msg.data[4]
-                    
                     if cmd == 0:   
                         if sid in pending_streams: pending_streams[sid].set()
                     elif cmd == 1: 
@@ -170,7 +164,7 @@ async def main(page: ft.Page):
             try: writer.close()
             except: pass
 
-    # --- 3. ГЛАВНЫЙ ЦИКЛ (РЕЖИМ "БРАУЗЕР") ---
+    # --- 3. ЗАПУСК (РЕЖИМ БРАУЗЕРА) ---
     
     async def start_engine():
         global RUNNING
@@ -178,22 +172,16 @@ async def main(page: ft.Page):
         session = None
         
         try:
-            # 1. Локальный прокси-порт
             server = await asyncio.start_server(handle_socks_client, '127.0.0.1', LOCAL_PORT)
             log(f"✅ READY: 127.0.0.1:{LOCAL_PORT}", "green")
             
-            # 2. НАСТРОЙКА SSL (БЕЛАЯ СХЕМА)
-            # Мы используем стандартный защищенный контекст.
-            # Это включает проверку сертификата, как в браузере.
+            # Стандартный SSL (как в браузере)
             ssl_context = ssl.create_default_context()
             
-            # 3. НАСТРОЙКА СЕТИ
-            # family=socket.AF_INET: Строго IPv4 (решает проблему "No address associated")
-            # ssl=ssl_context: Честный SSL
+            # Строго IPv4
             connector = aiohttp.TCPConnector(family=socket.AF_INET, ssl=ssl_context)
             
-            # 4. СЕССИЯ
-            # trust_env=False: Игнорируем прокси телефона, идем напрямую
+            # Игнор прокси телефона
             timeout = aiohttp.ClientTimeout(total=None, connect=15, sock_connect=15)
             session = aiohttp.ClientSession(connector=connector, trust_env=False, timeout=timeout)
             
@@ -201,8 +189,7 @@ async def main(page: ft.Page):
                 try:
                     log(f"Connecting to {SERVER_URL}...", "yellow")
                     
-                    # МАСКИРОВКА ПОД CHROME
-                    # Оператор видит эти заголовки и думает, что это браузер
+                    # Маскировка под Chrome
                     headers = {
                         "Authorization": TOKEN,
                         "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
@@ -211,40 +198,30 @@ async def main(page: ft.Page):
                     }
                     
                     async with session.ws_connect(SERVER_URL, headers=headers) as ws:
-                        log("🚀 SECURE LINK ESTABLISHED!", "green")
+                        log("🚀 LINK ESTABLISHED!", "green")
                         
-                        sender = asyncio.create_task(tunnel_sender(ws))
-                        receiver = asyncio.create_task(tunnel_receiver(ws))
-                        heart = asyncio.create_task(heartbeat_loop(ws))
-                        
-                        await asyncio.wait(
-                            [sender, receiver, heart], 
-                            return_when=asyncio.FIRST_COMPLETED
-                        )
-                        
-                        for t in [sender, receiver, heart]:
-                            if not t.done(): t.cancel()
+                        tasks = [tunnel_sender(ws), tunnel_receiver(ws), heartbeat_loop(ws)]
+                        await asyncio.wait([asyncio.create_task(t) for t in tasks], return_when=asyncio.FIRST_COMPLETED)
+                        for t in tasks: 
+                             if not t.done(): t.cancel()
                                 
                 except Exception as e:
                     if RUNNING:
-                        log(f"Link Drop: {e}", "red")
+                        log(f"Drop: {e}", "red")
                         await asyncio.sleep(5)
                     else: break
-                        
-        except Exception as e:
-            log(f"CRITICAL: {e}", "red")
         finally:
             if server: server.close()
             if session: await session.close()
-            log("🛑 ENGINE STOPPED", "red")
+            log("🛑 STOPPED", "red")
 
-    # --- 4. КНОПКА И ИНТЕРФЕЙС ---
+    # --- 4. ИНТЕРФЕЙС (ТОЛЬКО ТЕКСТ) ---
 
     async def on_click(e):
         global RUNNING, TRACTOR_TASK
         if not RUNNING:
             RUNNING = True
-            btn.text = "STOP SYSTEM"
+            btn.text = "STOP"
             btn.bgcolor = "#880000"
             page.update()
             TRACTOR_TASK = asyncio.create_task(start_engine())
@@ -253,35 +230,26 @@ async def main(page: ft.Page):
             btn.text = "STOPPING..."
             btn.disabled = True
             page.update()
-            
             if TRACTOR_TASK:
                 TRACTOR_TASK.cancel()
                 try: await TRACTOR_TASK
                 except: pass
-            
-            btn.text = "ACTIVATE"
+            btn.text = "START"
             btn.bgcolor = "#222222"
             btn.disabled = False
             page.update()
 
-    btn = ft.ElevatedButton("ACTIVATE", on_click=on_click, bgcolor="#222222", color="white", width=200, height=50)
+    btn = ft.ElevatedButton("START", on_click=on_click, bgcolor="#222222", color="white", width=200, height=50)
 
-    try:
-        page.add(
-            ft.Column([
-                ft.Container(height=30),
-                ft.Row([
-                    ft.Icon(name="shield", size=40, color="cyan"),
-                    ft.Text("ARRHYTHMIA", size=20, weight="bold", font_family="monospace"),
-                ], alignment=ft.MainAxisAlignment.CENTER),
-                ft.Container(height=20),
-                btn,
-                ft.Container(height=20),
-                ft.Text("SECURE UPLINK:", color="grey", size=10),
-            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+    page.add(
+        ft.Column([
+            ft.Container(height=30),
+            ft.Text("ARRHYTHMIA", size=20, weight="bold", font_family="monospace"),
+            ft.Container(height=20),
+            btn,
+            ft.Container(height=20),
             logs_container
-        )
-    except Exception as e:
-        page.add(ft.Text(f"UI ERROR: {e}", color="red"))
+        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+    )
 
 ft.app(target=main)
