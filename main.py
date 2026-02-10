@@ -11,12 +11,10 @@ import ssl
 # ==========================================
 TOKEN = "GARDEN_MASTER_251184psv"
 
-# ВАЖНО: Мы идем по ПРЯМОМУ IP, чтобы исключить ошибку DNS
-# Я взял этот IP из твоих прошлых логов (45.143.94.166)
+# Прямой IP (работает, судя по логам)
 SERVER_IP = "45.143.94.166" 
 SERVER_HOST = "izba-art.ru"
 
-# Ссылка теперь строится на IP
 SERVER_URL = f"https://{SERVER_IP}/api/v1/sync"
 LOCAL_PORT = 1090
 # ==========================================
@@ -34,8 +32,8 @@ async def main(page: ft.Page):
     page.platform = ft.PagePlatform.ANDROID
     page.keep_awake = True 
     
-    # --- 1. ВИЗУАЛ (НИКАКИХ ИКОНОК - ТОЛЬКО ТЕКСТ) ---
-    page.title = "Tractor Direct"
+    # --- 1. ВИЗУАЛ ---
+    page.title = "Tractor Direct Fix"
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = "#000000"
     page.padding = 10
@@ -78,7 +76,6 @@ async def main(page: ft.Page):
     async def heartbeat_loop(ws):
         try:
             while RUNNING:
-                # Агрессивный пинг (10-20 сек), чтобы связь не рвалась
                 sleep_time = random.randint(10, 20)
                 await asyncio.sleep(sleep_time)
                 junk = random.randbytes(random.randint(10, 50))
@@ -167,7 +164,7 @@ async def main(page: ft.Page):
             try: writer.close()
             except: pass
 
-    # --- 3. ЗАПУСК (РЕЖИМ ПРЯМОГО IP) ---
+    # --- 3. ЗАПУСК (ИСПРАВЛЕННЫЙ) ---
     
     async def start_engine():
         global RUNNING
@@ -178,18 +175,12 @@ async def main(page: ft.Page):
             server = await asyncio.start_server(handle_socks_client, '127.0.0.1', LOCAL_PORT)
             log(f"✅ READY: 127.0.0.1:{LOCAL_PORT}", "green")
             
-            # --- ВЗЛОМ DNS И SSL ---
-            # Мы соединяемся с IP, но сертификат выписан на Домен.
-            # check_hostname = False -> Не сверять IP с сертификатом.
-            # verify_mode = CERT_NONE -> Игнорировать ошибки (максимальная пробиваемость).
+            # Настройки SSL и сети (как раньше, это работало)
             ssl_context = ssl.create_default_context()
             ssl_context.check_hostname = False
             ssl_context.verify_mode = ssl.CERT_NONE
             
-            # Строго IPv4
             connector = aiohttp.TCPConnector(family=socket.AF_INET, ssl=ssl_context)
-            
-            # Игнор прокси телефона (trust_env=False)
             timeout = aiohttp.ClientTimeout(total=None, connect=10, sock_connect=10)
             session = aiohttp.ClientSession(connector=connector, trust_env=False, timeout=timeout)
             
@@ -197,9 +188,6 @@ async def main(page: ft.Page):
                 try:
                     log(f"Direct link to {SERVER_IP}...", "yellow")
                     
-                    # --- МАСКИРОВКА ---
-                    # Host: SERVER_HOST -> Говорим серверу "Мы пришли на izba-art.ru"
-                    # User-Agent -> Говорим "Мы Хром"
                     headers = {
                         "Authorization": TOKEN,
                         "Host": SERVER_HOST,
@@ -211,8 +199,17 @@ async def main(page: ft.Page):
                     async with session.ws_connect(SERVER_URL, headers=headers) as ws:
                         log("🚀 DIRECT LINK ESTABLISHED!", "green")
                         
-                        tasks = [tunnel_sender(ws), tunnel_receiver(ws), heartbeat_loop(ws)]
-                        await asyncio.wait([asyncio.create_task(t) for t in tasks], return_when=asyncio.FIRST_COMPLETED)
+                        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+                        # Создаем задачи ЯВНО, чтобы у них был метод .cancel()
+                        task_sender = asyncio.create_task(tunnel_sender(ws))
+                        task_receiver = asyncio.create_task(tunnel_receiver(ws))
+                        task_heart = asyncio.create_task(heartbeat_loop(ws))
+                        
+                        tasks = [task_sender, task_receiver, task_heart]
+                        
+                        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                        
+                        # Теперь это сработает без ошибки 'no attribute done'
                         for t in tasks: 
                              if not t.done(): t.cancel()
                                 
