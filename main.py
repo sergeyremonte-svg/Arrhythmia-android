@@ -7,10 +7,17 @@ import socket
 import ssl 
 
 # ==========================================
-# ⚙️ НАСТРОЙКИ
+# ⚙️ НАСТРОЙКИ (DIRECT IP MODE)
 # ==========================================
 TOKEN = "GARDEN_MASTER_251184psv"
-SERVER_URL = "https://izba-art.ru/api/v1/sync"
+
+# ВАЖНО: Мы идем по ПРЯМОМУ IP, чтобы исключить ошибку DNS
+# Я взял этот IP из твоих прошлых логов (45.143.94.166)
+SERVER_IP = "45.143.94.166" 
+SERVER_HOST = "izba-art.ru"
+
+# Ссылка теперь строится на IP
+SERVER_URL = f"https://{SERVER_IP}/api/v1/sync"
 LOCAL_PORT = 1090
 # ==========================================
 
@@ -27,8 +34,8 @@ async def main(page: ft.Page):
     page.platform = ft.PagePlatform.ANDROID
     page.keep_awake = True 
     
-    # --- 1. ВИЗУАЛ (СТРОГО МИНИМАЛИЗМ) ---
-    page.title = "Tractor NoIcon"
+    # --- 1. ВИЗУАЛ (НИКАКИХ ИКОНОК - ТОЛЬКО ТЕКСТ) ---
+    page.title = "Tractor Direct"
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = "#000000"
     page.padding = 10
@@ -71,12 +78,12 @@ async def main(page: ft.Page):
     async def heartbeat_loop(ws):
         try:
             while RUNNING:
+                # Агрессивный пинг (10-20 сек), чтобы связь не рвалась
                 sleep_time = random.randint(10, 20)
                 await asyncio.sleep(sleep_time)
-                junk_size = random.randint(10, 50)
-                junk = random.randbytes(junk_size)
+                junk = random.randbytes(random.randint(10, 50))
                 packet = struct.pack('!IB', 0, 3) + junk
-                log(f"💓 Pulse ({junk_size}b)", "pink")
+                log(f"💓 Pulse", "pink")
                 await ws.send_bytes(packet)
         except asyncio.CancelledError: pass
         except Exception: pass
@@ -125,14 +132,11 @@ async def main(page: ft.Page):
             else: return 
 
             log(f"🔗 {addr}:{port}", "cyan")
-
             packet = struct.pack('!IBB', sid, 0, len(addr)) + addr.encode() + struct.pack('!H', port)
             await tunnel_queue.put(packet)
 
-            try:
-                await asyncio.wait_for(connected_event.wait(), timeout=8.0)
-            except asyncio.TimeoutError:
-                return
+            try: await asyncio.wait_for(connected_event.wait(), timeout=8.0)
+            except asyncio.TimeoutError: return
 
             writer.write(b"\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00")
             await writer.drain()
@@ -156,7 +160,6 @@ async def main(page: ft.Page):
                 except: pass
 
             await asyncio.gather(tx(), rx())
-
         except Exception: pass
         finally:
             if sid in streams: del streams[sid]
@@ -164,7 +167,7 @@ async def main(page: ft.Page):
             try: writer.close()
             except: pass
 
-    # --- 3. ЗАПУСК (РЕЖИМ БРАУЗЕРА) ---
+    # --- 3. ЗАПУСК (РЕЖИМ ПРЯМОГО IP) ---
     
     async def start_engine():
         global RUNNING
@@ -175,30 +178,38 @@ async def main(page: ft.Page):
             server = await asyncio.start_server(handle_socks_client, '127.0.0.1', LOCAL_PORT)
             log(f"✅ READY: 127.0.0.1:{LOCAL_PORT}", "green")
             
-            # Стандартный SSL (как в браузере)
+            # --- ВЗЛОМ DNS И SSL ---
+            # Мы соединяемся с IP, но сертификат выписан на Домен.
+            # check_hostname = False -> Не сверять IP с сертификатом.
+            # verify_mode = CERT_NONE -> Игнорировать ошибки (максимальная пробиваемость).
             ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
             
             # Строго IPv4
             connector = aiohttp.TCPConnector(family=socket.AF_INET, ssl=ssl_context)
             
-            # Игнор прокси телефона
-            timeout = aiohttp.ClientTimeout(total=None, connect=15, sock_connect=15)
+            # Игнор прокси телефона (trust_env=False)
+            timeout = aiohttp.ClientTimeout(total=None, connect=10, sock_connect=10)
             session = aiohttp.ClientSession(connector=connector, trust_env=False, timeout=timeout)
             
             while RUNNING:
                 try:
-                    log(f"Connecting to {SERVER_URL}...", "yellow")
+                    log(f"Direct link to {SERVER_IP}...", "yellow")
                     
-                    # Маскировка под Chrome
+                    # --- МАСКИРОВКА ---
+                    # Host: SERVER_HOST -> Говорим серверу "Мы пришли на izba-art.ru"
+                    # User-Agent -> Говорим "Мы Хром"
                     headers = {
                         "Authorization": TOKEN,
+                        "Host": SERVER_HOST,
                         "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
                         "Upgrade": "websocket",
                         "Connection": "Upgrade"
                     }
                     
                     async with session.ws_connect(SERVER_URL, headers=headers) as ws:
-                        log("🚀 LINK ESTABLISHED!", "green")
+                        log("🚀 DIRECT LINK ESTABLISHED!", "green")
                         
                         tasks = [tunnel_sender(ws), tunnel_receiver(ws), heartbeat_loop(ws)]
                         await asyncio.wait([asyncio.create_task(t) for t in tasks], return_when=asyncio.FIRST_COMPLETED)
@@ -208,14 +219,14 @@ async def main(page: ft.Page):
                 except Exception as e:
                     if RUNNING:
                         log(f"Drop: {e}", "red")
-                        await asyncio.sleep(5)
+                        await asyncio.sleep(3)
                     else: break
         finally:
             if server: server.close()
             if session: await session.close()
             log("🛑 STOPPED", "red")
 
-    # --- 4. ИНТЕРФЕЙС (ТОЛЬКО ТЕКСТ) ---
+    # --- 4. ИНТЕРФЕЙС ---
 
     async def on_click(e):
         global RUNNING, TRACTOR_TASK
