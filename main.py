@@ -5,12 +5,13 @@ import struct
 import random
 import socket
 import traceback
+import ssl 
 
 # ==========================================
-# ⚙️ НАСТРОЙКИ (ВСТАВЬ СВОИ ДАННЫЕ)
+# ⚙️ НАСТРОЙКИ
 # ==========================================
-TOKEN = "GARDEN_MASTER_251184psv"  # <-- ТВОЙ ТОКЕН
-SERVER_URL = "https://izba-art.ru/api/v1/sync" # <-- ТВОЙ URL
+TOKEN = "GARDEN_MASTER_251184psv"
+SERVER_URL = "https://izba-art.ru/api/v1/sync"
 LOCAL_PORT = 1090
 # ==========================================
 
@@ -23,54 +24,67 @@ pending_streams = {}
 next_stream_id = 1
 
 async def main(page: ft.Page):
-    # --- НАСТРОЙКИ ANDROID ---
+    # --- 0. НАСТРОЙКА ANDROID ---
     page.platform = ft.PagePlatform.ANDROID
     page.keep_awake = True 
-    page.title = "Tractor Simple"
+    
+    # --- 1. ВИЗУАЛ ---
+    page.title = "Tractor Browser Mode"
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = "#000000"
-    page.padding = 20
+    page.padding = 10
+    page.scroll = None 
     
-    # Инициализация очереди
     global tunnel_queue
     tunnel_queue = asyncio.Queue()
 
-    # --- ЛОГИ ---
+    # Логгер
     logs_column = ft.Column(scroll=ft.ScrollMode.AUTO, auto_scroll=True)
     logs_container = ft.Container(
         content=logs_column,
         expand=True,
-        bgcolor="#111111",
+        bgcolor="#0a0a0a",
         border=ft.border.all(1, "#333333"),
-        border_radius=5,
-        padding=5,
+        border_radius=8,
+        padding=10,
     )
 
     def log(msg, color="white"):
         try:
-            # Просто текст, без излишеств
-            logs_column.controls.append(ft.Text(f"> {msg}", color=color, size=12))
-            if len(logs_column.controls) > 60: logs_column.controls.pop(0)
+            text = ft.Text(f"> {msg}", color=color, size=11, font_family="monospace", no_wrap=False, selectable=True)
+            logs_column.controls.append(text)
+            if len(logs_column.controls) > 60:
+                logs_column.controls.pop(0)
             page.update()
         except: pass
 
-    # --- СЕТЕВОЕ ЯДРО (БЕЗ ИЗМЕНЕНИЙ) ---
+    # --- 2. ЯДРО ТРАКТОРА ---
+
     async def tunnel_sender(ws):
         try:
             while RUNNING:
                 packet = await tunnel_queue.get()
                 await ws.send_bytes(packet)
                 tunnel_queue.task_done()
-        except: pass
+        except asyncio.CancelledError: pass
+        except Exception as e: pass
 
     async def heartbeat_loop(ws):
+        """ПИНГ (СЕРДЦЕБИЕНИЕ)"""
         try:
             while RUNNING:
-                await asyncio.sleep(random.randint(20, 140))
-                junk = random.randbytes(random.randint(10, 50))
-                await ws.send_bytes(struct.pack('!IB', 0, 3) + junk)
-                log("💓 Ping", "pink")
-        except: pass
+                # Дергаем сервер каждые 10-20 секунд, чтобы выглядеть живым пользователем
+                sleep_time = random.randint(10, 20)
+                await asyncio.sleep(sleep_time)
+                
+                junk_size = random.randint(10, 50)
+                junk = random.randbytes(junk_size)
+                
+                packet = struct.pack('!IB', 0, 3) + junk
+                log(f"💓 Pulse ({junk_size}b)", "pink")
+                await ws.send_bytes(packet)
+        except asyncio.CancelledError: pass
+        except Exception: pass
 
     async def tunnel_receiver(ws):
         try:
@@ -80,39 +94,56 @@ async def main(page: ft.Page):
                     if len(msg.data) < 5: continue
                     sid = struct.unpack('!I', msg.data[:4])[0]
                     cmd = msg.data[4]
-                    if cmd == 0 and sid in pending_streams: pending_streams[sid].set()
-                    elif cmd == 1 and sid in streams: await streams[sid].put(msg.data[5:])
-                    elif cmd == 2 and sid in streams: await streams[sid].put(None)
-        except: pass
+                    
+                    if cmd == 0:   
+                        if sid in pending_streams: pending_streams[sid].set()
+                    elif cmd == 1: 
+                        if sid in streams: await streams[sid].put(msg.data[5:])
+                    elif cmd == 2: 
+                        if sid in streams: await streams[sid].put(None)
+        except Exception as e:
+            log(f"RX Error: {e}", "red")
 
     async def handle_socks_client(reader, writer):
         global next_stream_id
         sid = next_stream_id
         next_stream_id += 1
+        
         streams[sid] = asyncio.Queue()
-        pending_streams[sid] = asyncio.Event()
+        connected_event = asyncio.Event()
+        pending_streams[sid] = connected_event
 
         try:
-            await reader.read(256)
+            await reader.read(256) 
             writer.write(b"\x05\x00")
             await writer.drain()
+            
             data = await reader.read(4096)
             if not data or len(data) < 7: return
             
-            if data[3] == 1: addr = ".".join(map(str, data[4:8])); port = struct.unpack('!H', data[8:10])[0]
-            elif data[3] == 3: l = data[4]; addr = data[5:5+l].decode(); port = struct.unpack('!H', data[5+l:7+l])[0]
-            else: return
+            if data[3] == 1: 
+                addr = ".".join(map(str, data[4:8]))
+                port = struct.unpack('!H', data[8:10])[0]
+            elif data[3] == 3: 
+                l = data[4]
+                addr = data[5:5+l].decode()
+                port = struct.unpack('!H', data[5+l:7+l])[0]
+            else: return 
 
             log(f"🔗 {addr}:{port}", "cyan")
-            await tunnel_queue.put(struct.pack('!IBB', sid, 0, len(addr)) + addr.encode() + struct.pack('!H', port))
 
-            try: await asyncio.wait_for(pending_streams[sid].wait(), timeout=10)
-            except: return
+            packet = struct.pack('!IBB', sid, 0, len(addr)) + addr.encode() + struct.pack('!H', port)
+            await tunnel_queue.put(packet)
+
+            try:
+                await asyncio.wait_for(connected_event.wait(), timeout=8.0)
+            except asyncio.TimeoutError:
+                return
 
             writer.write(b"\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00")
             await writer.drain()
 
-            async def r():
+            async def tx():
                 try:
                     while RUNNING:
                         d = await reader.read(16384)
@@ -121,7 +152,7 @@ async def main(page: ft.Page):
                     await tunnel_queue.put(struct.pack('!IB', sid, 2))
                 except: pass
 
-            async def w():
+            async def rx():
                 try:
                     while RUNNING:
                         d = await streams[sid].get()
@@ -130,67 +161,127 @@ async def main(page: ft.Page):
                         await writer.drain()
                 except: pass
 
-            await asyncio.gather(r(), w())
-        except: pass
+            await asyncio.gather(tx(), rx())
+
+        except Exception: pass
         finally:
             if sid in streams: del streams[sid]
             if sid in pending_streams: del pending_streams[sid]
             try: writer.close()
             except: pass
 
-    # --- ЗАПУСК ДВИГАТЕЛЯ ---
+    # --- 3. ГЛАВНЫЙ ЦИКЛ (РЕЖИМ "БРАУЗЕР") ---
+    
     async def start_engine():
         global RUNNING
         server = None
         session = None
+        
         try:
+            # 1. Локальный прокси-порт
             server = await asyncio.start_server(handle_socks_client, '127.0.0.1', LOCAL_PORT)
             log(f"✅ READY: 127.0.0.1:{LOCAL_PORT}", "green")
-            session = aiohttp.ClientSession()
+            
+            # 2. НАСТРОЙКА SSL (БЕЛАЯ СХЕМА)
+            # Мы используем стандартный защищенный контекст.
+            # Это включает проверку сертификата, как в браузере.
+            ssl_context = ssl.create_default_context()
+            
+            # 3. НАСТРОЙКА СЕТИ
+            # family=socket.AF_INET: Строго IPv4 (решает проблему "No address associated")
+            # ssl=ssl_context: Честный SSL
+            connector = aiohttp.TCPConnector(family=socket.AF_INET, ssl=ssl_context)
+            
+            # 4. СЕССИЯ
+            # trust_env=False: Игнорируем прокси телефона, идем напрямую
+            timeout = aiohttp.ClientTimeout(total=None, connect=15, sock_connect=15)
+            session = aiohttp.ClientSession(connector=connector, trust_env=False, timeout=timeout)
+            
             while RUNNING:
                 try:
-                    log("Connecting...", "yellow")
-                    async with session.ws_connect(SERVER_URL, headers={"Authorization": TOKEN}, ssl=False) as ws:
-                        log("🚀 CONNECTED!", "green")
-                        tasks = [tunnel_sender(ws), tunnel_receiver(ws), heartbeat_loop(ws)]
-                        await asyncio.wait([asyncio.create_task(t) for t in tasks], return_when=asyncio.FIRST_COMPLETED)
+                    log(f"Connecting to {SERVER_URL}...", "yellow")
+                    
+                    # МАСКИРОВКА ПОД CHROME
+                    # Оператор видит эти заголовки и думает, что это браузер
+                    headers = {
+                        "Authorization": TOKEN,
+                        "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+                        "Upgrade": "websocket",
+                        "Connection": "Upgrade"
+                    }
+                    
+                    async with session.ws_connect(SERVER_URL, headers=headers) as ws:
+                        log("🚀 SECURE LINK ESTABLISHED!", "green")
+                        
+                        sender = asyncio.create_task(tunnel_sender(ws))
+                        receiver = asyncio.create_task(tunnel_receiver(ws))
+                        heart = asyncio.create_task(heartbeat_loop(ws))
+                        
+                        await asyncio.wait(
+                            [sender, receiver, heart], 
+                            return_when=asyncio.FIRST_COMPLETED
+                        )
+                        
+                        for t in [sender, receiver, heart]:
+                            if not t.done(): t.cancel()
+                                
                 except Exception as e:
-                    if RUNNING: 
-                        log(f"Error: {e}", "red")
+                    if RUNNING:
+                        log(f"Link Drop: {e}", "red")
                         await asyncio.sleep(5)
                     else: break
+                        
+        except Exception as e:
+            log(f"CRITICAL: {e}", "red")
         finally:
             if server: server.close()
             if session: await session.close()
-            log("🛑 STOPPED", "red")
+            log("🛑 ENGINE STOPPED", "red")
 
-    # --- КНОПКА И UI (БЕЗ ИКОНОК!) ---
+    # --- 4. КНОПКА И ИНТЕРФЕЙС ---
+
     async def on_click(e):
         global RUNNING, TRACTOR_TASK
         if not RUNNING:
             RUNNING = True
-            btn.text = "STOP"
-            btn.bgcolor = "red"
+            btn.text = "STOP SYSTEM"
+            btn.bgcolor = "#880000"
+            page.update()
             TRACTOR_TASK = asyncio.create_task(start_engine())
         else:
             RUNNING = False
-            btn.text = "START"
-            btn.bgcolor = "green"
-            if TRACTOR_TASK: TRACTOR_TASK.cancel()
-        page.update()
+            btn.text = "STOPPING..."
+            btn.disabled = True
+            page.update()
+            
+            if TRACTOR_TASK:
+                TRACTOR_TASK.cancel()
+                try: await TRACTOR_TASK
+                except: pass
+            
+            btn.text = "ACTIVATE"
+            btn.bgcolor = "#222222"
+            btn.disabled = False
+            page.update()
 
-    btn = ft.ElevatedButton("START", on_click=on_click, bgcolor="green", color="white", width=200, height=60)
+    btn = ft.ElevatedButton("ACTIVATE", on_click=on_click, bgcolor="#222222", color="white", width=200, height=50)
 
-    # Простейшая сборка: Текст, Кнопка, Логи
-    page.add(
-        ft.Column([
-            ft.Container(height=40),
-            ft.Text("ARRHYTHMIA", size=30, weight="bold", color="white"),
-            ft.Container(height=20),
-            btn,
-            ft.Container(height=20),
+    try:
+        page.add(
+            ft.Column([
+                ft.Container(height=30),
+                ft.Row([
+                    ft.Icon(name="shield", size=40, color="cyan"),
+                    ft.Text("ARRHYTHMIA", size=20, weight="bold", font_family="monospace"),
+                ], alignment=ft.MainAxisAlignment.CENTER),
+                ft.Container(height=20),
+                btn,
+                ft.Container(height=20),
+                ft.Text("SECURE UPLINK:", color="grey", size=10),
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
             logs_container
-        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER)
-    )
+        )
+    except Exception as e:
+        page.add(ft.Text(f"UI ERROR: {e}", color="red"))
 
 ft.app(target=main)
